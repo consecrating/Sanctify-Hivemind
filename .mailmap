@@ -1,0 +1,5 @@
+# Map commit identities to the preferred display name for this project.
+# GitHub's Contributors graph uses account-linked emails, but tools that respect
+# .mailmap (git shortlog, git log --use-mailmap) will show the Sanctify identity.
+sanctify-agent <agent@sanctify.in>
+sanctify-agent <agent@sanctify.in> Kiro Agent <244629292+kiro-agent@users.noreply.github.com>

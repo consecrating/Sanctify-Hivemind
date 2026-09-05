@@ -42,12 +42,17 @@ class WordPressAdapter:
         return self._session
 
     # ── READ capabilities ──────────────────────────────────────────────
-    def http_get(self, path: str = "/") -> dict:
-        """Public GET (recon). No credentials used."""
+    def http_get(self, path: str = "/", user_agent: Optional[str] = None) -> dict:
+        """Public GET (recon). No credentials used.
+
+        ``user_agent`` lets a detector fetch *as Googlebot* to expose cloaked SEO
+        spam (content shown only to crawlers). Still a READ operation.
+        """
         url = self.cfg.url + path if path.startswith("/") else path
         if self.offline:
-            return {"url": url, "status": None, "offline": True, "text": ""}
-        r = self._http().get(url, timeout=25)
+            return {"url": url, "status": None, "offline": True, "text": "", "ua": user_agent}
+        headers = {"User-Agent": user_agent} if user_agent else {}
+        r = self._http().get(url, headers=headers, timeout=25)
         return {"url": url, "status": r.status_code,
                 "headers": dict(r.headers), "text": r.text[:200000]}
 

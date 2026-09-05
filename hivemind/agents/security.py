@@ -14,9 +14,13 @@ through SafeChange transactions — but assessment never needs it.
 
 from __future__ import annotations
 
+import re
+
 from ..core.agent import Agent, AgentContext, Task, TaskResult
 from ..core.tools import Access, CapabilityGrant
-from .rules import MALWARE_IOCS, RULES_VERSION, Finding, match_cves
+from .rules import (
+    MALWARE_IOCS, RULES_VERSION, SEO_SPAM_IOCS, Finding, match_cves, scan_seo_spam,
+)
 
 
 class SecurityAgent(Agent):
@@ -46,18 +50,22 @@ class SecurityAgent(Agent):
         # 2) Malware IOC scan (READ). Presence of any is high-signal.
         findings += self._scan_iocs(ctx)
 
+        # 2b) SEO-spam / Japanese-keyword-hack + cloaking scan (READ).
+        findings += self._scan_seo_spam(ctx)
+
         # 3) Exposure findings surfaced by recon.
         for path in (stack.get("exposed_files") or {}):
             findings.append(Finding("exposure", "medium", path,
                                     f"Sensitive file publicly accessible: {path}",
                                     "Deny direct access via .htaccess / disable directory listing."))
 
-        infected = any(f.kind == "malware" for f in findings)
-        criticals = [f for f in findings if f.severity == "critical"]
+        infected = any(f.kind in ("malware", "seo_spam") for f in findings)
+        spammed = any(f.kind == "seo_spam" for f in findings)
 
         payload = {
             "rules_version": RULES_VERSION,
             "infected": infected,
+            "seo_spam": spammed,
             "findings": [f.__dict__ for f in findings],
             "counts": {
                 "critical": sum(1 for f in findings if f.severity == "critical"),
@@ -112,3 +120,45 @@ class SecurityAgent(Agent):
                     "Remove file; neutralize auto_prepend in .user.ini/.htaccess; clear malicious cron.",
                 ))
         return found
+
+    def _scan_seo_spam(self, ctx: AgentContext) -> list[Finding]:
+        """Detect the Japanese-keyword-hack / cloaked SEO-spam class.
+
+        Fetches the homepage BOTH as a normal browser and as Googlebot, then diffs +
+        scans for foreign-script/spam content. Also scans the sitemap for spam URLs.
+        This catches the hack that is invisible in a browser but indexed by Google.
+        """
+        try:
+            normal = ctx.tools.invoke("wp.http_get", path="/")
+        except Exception:  # noqa: BLE001
+            return []
+        normal_html = normal.get("text", "") or ""
+
+        bot_html = None
+        try:
+            bot = ctx.tools.invoke(
+                "wp.http_get", path="/", user_agent=SEO_SPAM_IOCS["googlebot_user_agent"]
+            )
+            bot_html = bot.get("text", "") or ""
+        except TypeError:
+            # adapter without user_agent support — skip cloaking diff gracefully
+            bot_html = None
+        except Exception:  # noqa: BLE001
+            bot_html = None
+
+        # Pull sitemap URLs (best-effort) for spam-URL detection.
+        sitemap_urls: list[str] = []
+        for name in SEO_SPAM_IOCS["suspect_sitemap_names"]:
+            try:
+                r = ctx.tools.invoke("wp.http_get", path="/" + name)
+            except Exception:  # noqa: BLE001
+                continue
+            if r.get("status") and int(r["status"]) == 200 and r.get("text"):
+                sitemap_urls += re.findall(r"<loc>(.*?)</loc>", r["text"])
+                break
+
+        findings = scan_seo_spam(normal_html, bot_html=bot_html, sitemap_urls=sitemap_urls or None)
+        if findings:
+            self._log(ctx, "SEO-spam signals detected", count=len(findings),
+                      cloaking=any(f.ref == "cloaking" for f in findings))
+        return findings

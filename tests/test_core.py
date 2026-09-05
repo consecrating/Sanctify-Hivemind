@@ -100,6 +100,31 @@ def test_cve_matching_version_ranges():
     assert match_cves({"trx_addons": "2.45.0"}) == []
 
 
+def test_seo_spam_detection_and_cloaking():
+    from hivemind.agents.rules import scan_seo_spam, contains_foreign_script
+
+    # foreign script detection
+    assert contains_foreign_script("HOT！シャクティワンダーボール 正規品") == "Japanese"
+    assert contains_foreign_script("Best Casino in Goa") is None
+
+    clean = "<html><head><title>Casino Pride — Best Casino in Goa</title></head><body>ok</body></html>"
+    spam = ("<html><head><title>HOT！正規品 限定モデル</title>"
+            "<meta name='description' content='激安 通販'></head><body>正規品</body></html>")
+
+    # no bot diff, clean page → nothing
+    assert scan_seo_spam(clean) == []
+
+    # cloaking: browser sees clean, Googlebot sees spam → CRITICAL cloaking finding
+    findings = scan_seo_spam(clean, bot_html=spam)
+    refs = {f.ref for f in findings}
+    assert "cloaking" in refs
+    assert any(f.severity == "critical" for f in findings)
+
+    # sitemap spam URLs
+    f2 = scan_seo_spam(clean, sitemap_urls=["https://x/seihin-copy/", "https://x/about/"])
+    assert any(f.ref == "sitemap-spam" for f in f2)
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     passed = 0

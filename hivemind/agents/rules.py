@@ -15,8 +15,9 @@ This is the artifact that makes the swarm smarter over time: new incidents → n
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Optional
 
-RULES_VERSION = "2026.09.1"
+RULES_VERSION = "2026.09.2"
 
 # ── Malware family indicators (Smooth Backup Ink / SCV) ──────────────────
 MALWARE_IOCS = {
@@ -31,6 +32,52 @@ MALWARE_IOCS = {
     "rogue_admin_pattern": r"^backup_[0-9a-f]{6,}",
     "db_dropin_marker": "SC_DB",                # a db.php dropin carrying this = malicious
 }
+
+
+# ── SEO-spam / "Japanese keyword hack" indicators ────────────────────────
+# A different class from file malware: the attacker injects spam pages/content that
+# often render ONLY to search-engine crawlers (cloaking), so the site looks clean in
+# a browser while Google indexes counterfeit-goods / pharma / foreign-language spam.
+# Symptoms: foreign-script titles in SERPs (Japanese/Chinese/Cyrillic), fake product
+# spam ("正規品", "限定モデル"), a bloated/rogue sitemap with unknown URLs, and
+# injected posts with non-site languages.
+SEO_SPAM_IOCS = {
+    # Unicode script ranges whose *unexpected* presence in <title>/<h1>/meta on an
+    # English/Hindi casino site is a strong spam signal.
+    "foreign_script_ranges": [
+        ("Japanese", 0x3040, 0x30FF),   # Hiragana + Katakana
+        ("CJK", 0x4E00, 0x9FFF),        # CJK Unified Ideographs
+        ("Cyrillic", 0x0400, 0x04FF),
+        ("Arabic", 0x0600, 0x06FF),
+        ("Thai", 0x0E00, 0x0E7F),
+    ],
+    # High-signal spam phrases seen in these hacks (counterfeit/pharma/replica).
+    "spam_phrases": [
+        "正規品", "限定モデル", "激安", "通販", "スーパーコピー",   # JP counterfeit-goods
+        "viagra", "cialis", "casino-online", "replica", "rolex",
+        "louis vuitton", "outlet", "cheap", "wholesale",
+    ],
+    # Cloaking test: content served to Googlebot differs materially from a normal UA.
+    "googlebot_user_agent": (
+        "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)"
+    ),
+    # A spam sitemap is often a distinct file or a huge jump in URL count with
+    # foreign-language / product-looking slugs.
+    "suspect_sitemap_names": ["sitemap.xml", "sitemap_index.xml", "sitemap-1.xml"],
+    # spammy slug fragments in URLs (romaji/product spam)
+    "spam_slug_fragments": ["seihin", "gekiyasu", "copy", "replica", "outlet", "-jp-", "wanda"],
+}
+
+
+def contains_foreign_script(text: str) -> Optional[str]:
+    """Return the name of the first unexpected foreign script found in ``text``, else None."""
+    if not text:
+        return None
+    for name, lo, hi in SEO_SPAM_IOCS["foreign_script_ranges"]:
+        for ch in text:
+            if lo <= ord(ch) <= hi:
+                return name
+    return None
 
 
 @dataclass(frozen=True)
@@ -72,9 +119,9 @@ CVE_RULES: list[CVERule] = [
 
 @dataclass
 class Finding:
-    kind: str          # "malware" | "cve" | "exposure"
+    kind: str          # "malware" | "cve" | "exposure" | "seo_spam"
     severity: str
-    ref: str           # IOC name / CVE id
+    ref: str           # IOC name / CVE id / spam signal
     detail: str
     remediation: str = ""
 
@@ -103,3 +150,92 @@ def match_cves(installed: dict[str, str]) -> list[Finding]:
                 remediation=f"Update to {rule.fixed_in}. Virtual patch: {rule.virtual_patch}",
             ))
     return out
+
+
+# ── SEO-spam / Japanese-keyword-hack analysis ────────────────────────────
+
+def _extract_titleish(html: str) -> str:
+    """Pull the text most likely to surface in a SERP: <title>, meta description, h1s."""
+    import re
+    chunks = []
+    for pat in (r"<title[^>]*>(.*?)</title>",
+                r'<meta[^>]+name=["\']description["\'][^>]+content=["\'](.*?)["\']',
+                r"<h1[^>]*>(.*?)</h1>"):
+        chunks += re.findall(pat, html or "", re.I | re.S)
+    return " ".join(re.sub(r"<[^>]+>", "", c) for c in chunks)
+
+
+def scan_seo_spam(
+    normal_html: str,
+    bot_html: Optional[str] = None,
+    sitemap_urls: Optional[list[str]] = None,
+    site_lang_ok: tuple = ("Japanese", "CJK", "Cyrillic", "Arabic", "Thai"),
+) -> list[Finding]:
+    """Detect the Japanese-keyword-hack / cloaked SEO-spam class.
+
+    Signals (any one is actionable; combined = high confidence):
+      1. Foreign-script text in the SERP-facing content (title/desc/h1).
+      2. Known counterfeit/pharma spam phrases in the content.
+      3. **Cloaking** — the Googlebot-fetched HTML differs materially from the normal
+         UA HTML (spam shown only to the crawler). This is the strongest signal and
+         explains why the site "looks clean" in a browser.
+      4. Spam-looking slugs / foreign-language URLs in the sitemap.
+    """
+    findings: list[Finding] = []
+    normal_html = normal_html or ""
+
+    # 1) foreign script in SERP-facing content
+    serp_text = _extract_titleish(normal_html)
+    script = contains_foreign_script(serp_text)
+    if script:
+        findings.append(Finding(
+            "seo_spam", "high", f"foreign-script:{script}",
+            f"Unexpected {script} text in title/description/H1 — likely injected SEO spam.",
+            "Find and remove injected posts/pages; check DB (wp_posts) and rogue templates; "
+            "purge from Google via Search Console removals + re-index clean pages.",
+        ))
+
+    # 2) spam phrases (case-insensitive)
+    low = normal_html.lower()
+    hit_phrases = [p for p in SEO_SPAM_IOCS["spam_phrases"] if p.lower() in low or p in normal_html]
+    if hit_phrases:
+        findings.append(Finding(
+            "seo_spam", "high", "spam-phrases",
+            f"Counterfeit/pharma spam phrases present: {', '.join(hit_phrases[:6])}",
+            "Locate injection source (theme header/footer, injected posts, malicious "
+            "must-use plugin, or DB option) and remove; then request Google re-crawl.",
+        ))
+
+    # 3) cloaking — Googlebot sees different content than a browser
+    if bot_html is not None and bot_html != normal_html:
+        bot_serp = _extract_titleish(bot_html)
+        bot_script = contains_foreign_script(bot_serp)
+        bot_phrases = [p for p in SEO_SPAM_IOCS["spam_phrases"]
+                       if p.lower() in (bot_html or "").lower() or p in (bot_html or "")]
+        if bot_script or bot_phrases:
+            findings.append(Finding(
+                "seo_spam", "critical", "cloaking",
+                "CLOAKING detected: content served to Googlebot contains spam "
+                f"({bot_script or ''} {','.join(bot_phrases[:4])}) that a normal visitor does NOT see. "
+                "This is why the hack is invisible in a browser.",
+                "Remove the cloaking handler (checks User-Agent/IP for crawlers). Inspect "
+                ".htaccess, mu-plugins, functions.php, and any code branching on Googlebot. "
+                "Verify with Search Console 'URL Inspection > View crawled page'.",
+            ))
+
+    # 4) sitemap spam URLs
+    if sitemap_urls:
+        spammy = []
+        for u in sitemap_urls:
+            if contains_foreign_script(u) or any(f in u.lower() for f in SEO_SPAM_IOCS["spam_slug_fragments"]):
+                spammy.append(u)
+        if spammy:
+            findings.append(Finding(
+                "seo_spam", "high", "sitemap-spam",
+                f"{len(spammy)} spam/foreign-language URL(s) in sitemap "
+                f"(e.g. {spammy[0][:80]}).",
+                "Remove injected posts and regenerate the sitemap; submit the clean "
+                "sitemap in Search Console and request removal of the spam URLs.",
+            ))
+
+    return findings

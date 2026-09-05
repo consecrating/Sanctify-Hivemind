@@ -132,6 +132,15 @@ Sanctify-Hivemind/
 WordPress adapter, and the Security/Recon specialists run a real goal end-to-end.
 Additional specialists (SEO, Frontend, Content) plug into the same contracts.
 
+The Security agent currently detects:
+- the self-healing **"Smooth Backup Ink" (SCV)** file-malware family (IOC scan),
+- **vulnerable plugins/themes** via a versioned CVE rules library (ThemeREX Addons,
+  Slider Revolution), and
+- the **Japanese-keyword-hack / cloaked SEO spam** class — by fetching the page *as
+  Googlebot* and diffing against a normal browser, catching spam that is invisible to
+  visitors but indexed by Google (foreign-script titles, counterfeit-goods phrases,
+  spam sitemap URLs).
+
 ## Credits
 
 Built and maintained by **[Sanctify — Digital Marketing Agency, Goa](https://www.sanctify.in/)**.

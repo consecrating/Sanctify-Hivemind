@@ -1,0 +1,17 @@
+{
+  "mcpServers": {
+    "sanctify-hivemind": {
+      "command": "hivemind-mcp",
+      "args": [],
+      "env": {
+        "WP_URL": "https://your-site.com"
+      },
+      "disabled": false,
+      "autoApprove": [
+        "hivemind.recon",
+        "hivemind.security_scan",
+        "hivemind.seo_spam_scan"
+      ]
+    }
+  }
+}

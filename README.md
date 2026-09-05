@@ -141,6 +141,29 @@ The Security agent currently detects:
   visitors but indexed by Google (foreign-script titles, counterfeit-goods phrases,
   spam sitemap URLs).
 
+## Use it from any AI assistant (MCP)
+
+Hivemind ships an **MCP server** (`hivemind-mcp`) so it plugs in as a native tool for
+**Kiro, ChatGPT (desktop), Codex, and the Gemini CLI**, and as a **library/CLI** for
+Grok or any code-running agent.
+
+```bash
+pip install -e ".[mcp,wordpress]"
+hivemind-mcp        # stdio MCP server exposing recon / security_scan / seo_spam_scan / run_goal
+```
+
+Point the target site via the server's env (`WP_URL`) — **the model never supplies
+credentials or the target**, which prevents prompt-driven SSRF / secret leakage.
+
+👉 **Copy-paste config for each assistant is in [USAGE.md](USAGE.md).**
+
+| Tool | Access | Purpose |
+|------|--------|---------|
+| `hivemind.recon` | read-only | Fingerprint stack, plugins, exposure |
+| `hivemind.security_scan` | read-only | Malware IOCs + vulnerable-plugin CVEs |
+| `hivemind.seo_spam_scan` | read-only | Japanese/Russian keyword-hack + cloaking |
+| `hivemind.run_goal` | varies | Run a natural-language goal end-to-end |
+
 ## Credits
 
 Built and maintained by **[Sanctify — Digital Marketing Agency, Goa](https://www.sanctify.in/)**.

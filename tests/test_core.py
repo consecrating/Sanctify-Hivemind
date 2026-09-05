@@ -125,6 +125,25 @@ def test_seo_spam_detection_and_cloaking():
     assert any(f.ref == "sitemap-spam" for f in f2)
 
 
+def test_russian_gambling_spam_and_transliteration():
+    from hivemind.agents.rules import scan_seo_spam
+
+    # Cyrillic "pinko casino" spam (the paikane.com screenshot case)
+    ru = ("<html><head><title>Финансовые аспекты пинко казино: отзывы игроков</title>"
+          "</head><body>азартные игры</body></html>")
+    ref = {f.ref for f in scan_seo_spam(ru)}
+    assert "foreign-script:Cyrillic" in ref   # caught by script detector
+    assert "spam-phrases" in ref               # AND by Russian gambling vocab
+
+    # Latin-script transliteration would slip past the script check — vocab must catch it
+    tl = "<html><head><title>Pinco Casino otzyvy — kazino bonus vavada</title></head><body>x</body></html>"
+    assert any(f.ref == "spam-phrases" for f in scan_seo_spam(tl))
+
+    # a clean English casino page must NOT false-positive
+    ok = "<html><head><title>Casino Pride — Best Casino in Goa</title></head><body>welcome</body></html>"
+    assert scan_seo_spam(ok) == []
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     passed = 0

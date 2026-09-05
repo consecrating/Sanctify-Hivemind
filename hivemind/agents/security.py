@@ -158,7 +158,65 @@ class SecurityAgent(Agent):
                 break
 
         findings = scan_seo_spam(normal_html, bot_html=bot_html, sitemap_urls=sitemap_urls or None)
+
+        # DEEP scan: injected spam usually lives on a deep URL, not the homepage
+        # (e.g. paikane.com/…/pinko-casino). Sample sitemap URLs + probe common spam
+        # paths, fetching each AS Googlebot (cloaked pages hide from normal visitors).
+        deep_findings = self._scan_deep_pages(ctx, sitemap_urls)
+        findings += deep_findings
+
         if findings:
             self._log(ctx, "SEO-spam signals detected", count=len(findings),
-                      cloaking=any(f.ref == "cloaking" for f in findings))
+                      cloaking=any(f.ref == "cloaking" for f in findings),
+                      deep=len(deep_findings))
         return findings
+
+    def _scan_deep_pages(self, ctx: AgentContext, sitemap_urls: list[str]) -> list[Finding]:
+        """Fetch a bounded sample of deep pages AS Googlebot and scan each for spam.
+
+        Prioritises: (a) sitemap URLs whose slug already looks spammy, then (b) a small
+        sample of other sitemap URLs, then (c) known spam probe paths. Bounded so the
+        scan stays cheap.
+        """
+        from urllib.parse import urlparse
+
+        out: list[Finding] = []
+        seen: set[str] = set()
+        gbot = SEO_SPAM_IOCS["googlebot_user_agent"]
+        frags = SEO_SPAM_IOCS["spam_slug_fragments"]
+
+        # Build a prioritized, de-duped path list (max ~12 fetches).
+        def to_path(u: str) -> str:
+            try:
+                p = urlparse(u)
+                return (p.path or "/") + (("?" + p.query) if p.query else "")
+            except Exception:  # noqa: BLE001
+                return u
+
+        suspicious = [to_path(u) for u in sitemap_urls
+                      if any(fr in u.lower() for fr in frags)]
+        sample = [to_path(u) for u in sitemap_urls[:8]]
+        candidates = suspicious + sample + list(SEO_SPAM_IOCS["spam_probe_paths"])
+
+        for path in candidates:
+            if len(seen) >= 12:
+                break
+            if not path or path in seen:
+                continue
+            seen.add(path)
+            try:
+                r = ctx.tools.invoke("wp.http_get", path=path, user_agent=gbot)
+            except TypeError:
+                r = ctx.tools.invoke("wp.http_get", path=path)
+            except Exception:  # noqa: BLE001
+                continue
+            if not (r.get("status") and int(r["status"]) == 200):
+                continue
+            page_findings = scan_seo_spam(r.get("text", "") or "")
+            for f in page_findings:
+                # Re-tag with the offending path so remediation knows where to look.
+                out.append(Finding(
+                    f.kind, f.severity, f"{f.ref}@{path}",
+                    f"[{path}] {f.detail}", f.remediation,
+                ))
+        return out

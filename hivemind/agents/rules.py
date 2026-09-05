@@ -17,7 +17,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Optional
 
-RULES_VERSION = "2026.09.2"
+RULES_VERSION = "2026.09.3"
 
 # ── Malware family indicators (Smooth Backup Ink / SCV) ──────────────────
 MALWARE_IOCS = {
@@ -51,11 +51,22 @@ SEO_SPAM_IOCS = {
         ("Arabic", 0x0600, 0x06FF),
         ("Thai", 0x0E00, 0x0E7F),
     ],
-    # High-signal spam phrases seen in these hacks (counterfeit/pharma/replica).
+    # High-signal spam phrases seen in these hacks. Grouped by campaign family so the
+    # list is easy to extend. Matched case-insensitively; unicode terms matched as-is.
     "spam_phrases": [
-        "正規品", "限定モデル", "激安", "通販", "スーパーコピー",   # JP counterfeit-goods
-        "viagra", "cialis", "casino-online", "replica", "rolex",
-        "louis vuitton", "outlet", "cheap", "wholesale",
+        # Japanese counterfeit-goods ("正規品" = genuine article, "限定モデル" = limited model)
+        "正規品", "限定モデル", "激安", "通販", "スーパーコピー", "みびょ",
+        # Russian gambling/casino spam (the "pinco/pinup kazino" campaign family)
+        "казино", "игроков", "игроки", "азартны", "азартные игры", "ставки",
+        "отзывы", "игорн", "бонус", "букмекер", "слоты", "выигрыш",
+        "пинко", "пин ап", "пин-ап", "вавада", "1вин", "1win",
+        # Latin-script transliterations / brand spam (script check won't catch these)
+        "kazino", "pinco casino", "pinup", "pin-up casino", "vavada", "mostbet",
+        "casino online", "casino-online", "online kasino", "onlayn kazino",
+        "bookmaker", "betting", "slots bonus", "azino",
+        # Pharma / counterfeit (other common keyword-hack payloads)
+        "viagra", "cialis", "replica", "rolex", "louis vuitton", "outlet",
+        "cheap", "wholesale", "escort",
     ],
     # Cloaking test: content served to Googlebot differs materially from a normal UA.
     "googlebot_user_agent": (
@@ -64,8 +75,18 @@ SEO_SPAM_IOCS = {
     # A spam sitemap is often a distinct file or a huge jump in URL count with
     # foreign-language / product-looking slugs.
     "suspect_sitemap_names": ["sitemap.xml", "sitemap_index.xml", "sitemap-1.xml"],
-    # spammy slug fragments in URLs (romaji/product spam)
-    "spam_slug_fragments": ["seihin", "gekiyasu", "copy", "replica", "outlet", "-jp-", "wanda"],
+    # spammy slug fragments in URLs (romaji/product spam + gambling campaigns)
+    "spam_slug_fragments": [
+        "seihin", "gekiyasu", "copy", "replica", "outlet", "-jp-", "wanda",
+        "kazino", "casino", "pinco", "pinup", "pin-up", "vavada", "mostbet",
+        "1win", "azino", "stavki", "bukmeker", "sloty", "bonus", "otzyvy", "igrok",
+    ],
+    # Common deep paths where injected spam pages/directories are found — probed as
+    # Googlebot because the pages often cloak to normal visitors.
+    "spam_probe_paths": [
+        "/casino/", "/kazino/", "/pinco/", "/pin-up/", "/slots/", "/bonus/",
+        "/wp-content/uploads/sitemap.xml", "/sitemap-spam.xml",
+    ],
 }
 
 
